@@ -1,0 +1,99 @@
+---
+title: "Data VS 2"
+author: "Mai Ngo"
+date: "2024-04-18"
+output: pdf_document
+---
+
+```{r}
+setwd("C:/Users/maimu/OneDrive/Documents/DePaul/DSC 465/2nd")
+```
+
+#Libraries.
+```{r message=FALSE}
+library(cartogram)
+library(sf)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+```
+
+Read data sets. Get basic information about the Food Services dataset.
+```{r, results='asis'}
+foodData <- read.delim("FoodSrvcByCounty.txt")
+foodData[foodData == ""] <- NA
+
+print("Food Services Data:")
+print(paste("Missing values count: ", sum(is.na(foodData))))
+print(paste("Row:", dim(foodData)[1], "Column:", dim(foodData)[2]))
+```
+
+#Data pre-process.
+```{r}
+#Calculate average food services across three years.
+foodData$Avg_FoodServices <-(foodData$FoodServices.97+foodData$FoodServices.2002                    
+                             +foodData$FoodServices.2007) /3
+#Subset the data to plot, only keep state 
+foodData_state <- foodData[is.na(foodData$State), ]
+
+#Drop United States row.
+foodData_state <- foodData_state[-1, ]
+#Drop non-graph columns.
+foodData_state <- subset(foodData_state, select = -c(State, FoodServices.97, 
+                         FoodServices.2002, FoodServices.2007))
+
+#Rename and remove duplicate row.
+names(foodData_state)[names(foodData_state) == "County"] <- "State"
+foodData_state <- foodData_state %>%  filter(State != 'District of Columbia')
+#Convert to capitalize state name instead of upper case.
+foodData_state$State <- str_to_title(foodData_state$State)
+head(foodData_state)
+```
+
+#Plot cartogram.
+
+Source: https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html
+State: 1 : 500,000 (national)  shapefile [3.1 MB] 
+```{r, message=FALSE}
+#US states shape data. 
+states <- st_read("cb_2022_us_state_500k.shp")
+
+#Transform coordinates to a suitable projected CRS (Albers Equal Area Conic).
+projectedStates <- st_transform(states, crs = "+proj=aea +lat_1=29.5 +lat_2=45.5 
+           +lat_0=37.5 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs")
+
+#Join spatial data with foodData_state, excluding states not in original data.
+mergedData <- merge(projectedStates, foodData_state, by.x = "NAME", 
+                    by.y = "State", all.x = TRUE)
+mergedData <- mergedData[!is.na(mergedData$Avg_FoodServices), ]
+
+cartogramData <- cartogram_cont(mergedData, "Avg_FoodServices")
+#Convert to data frame for plotting.
+cartogramData2 <- st_sf(cartogramData)
+```
+
+```{r}
+head(cartogramData2, 3)
+```
+
+# Comment: 
+
+* This cartogram aims to emphasize the higher food services availability, the larger area of the states. 
+* Due to modifying shape file data to match with this cartogram's objective, US map are shown as globe shape, I could not find another code approach to map it flat hence, cannot enlarge the map. Removing Alaska and Hawaii would not be ideal since we want to include full information of the data.  
+
+```{r}
+#Extract coordinates for state labels,
+coords <- st_coordinates(st_centroid(cartogramData2))
+cartogramData2$x <- coords[, "X"]
+cartogramData2$y <- coords[, "Y"]
+
+ggplot() + 
+  geom_sf(data = cartogramData2, aes(fill = Avg_FoodServices)) +
+  geom_text(data = cartogramData2, aes(label = STUSPS, x = x, y = y), 
+            size = 1.7, color = "black", check_overlap = TRUE) + 
+  scale_fill_gradient(name = "Food Services \n Availability", 
+                      low = "bisque1", high = "brown") +
+  theme_minimal() +
+  labs(title = "Cartogram for Food Services by States") +
+  theme(legend.position = "right", aspect.ratio = 1/2)
+```
